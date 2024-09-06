@@ -2,11 +2,15 @@
 
 namespace App\Router;
 
+use App\Traits\Singleton;
+
 require __DIR__ . '/../helpers/helper.php';
 
 
 class Router
 {
+    use Singleton;
+
     private static $router;
 
     public function __construct(private array $routes = [])
@@ -52,9 +56,12 @@ class Router
             $this->routes[$method] = [];
         }
 
+        $pattern = preg_replace('/\{[^\}]+\}/', '([^/]+)', $uri);
+        $pattern = '#^' . $pattern . '$#';
+
         list($controller, $function) = $this->extractAction($action);
 
-        $this->routes[$method][$uri] = [
+        $this->routes[$method][$pattern] = [
             'controller' => $controller,
             'method' => $function
         ];
@@ -71,29 +78,33 @@ class Router
         return [$controller, $function];
     }
 
-    public function route(string $method, string $uri): bool
+    public function route(string $method, string $uri, $db): bool
     {
+        file_put_contents('log.txt', "Routing: $method $uri\n", FILE_APPEND);
 
-        $result = dataGet($this->routes, $method . "." . $uri);
+        foreach ($this->routes[$method] as $pattern => $result) {
+            if (preg_match($pattern, $uri, $matches)) {
+                array_shift($matches);
 
-        if (!$result) {
-            abort("Route not found", 404);
-        }
+                $controller = $result['controller'];
+                $function = $result['method'];
 
-        $controller = $result['controller'];
-        $function = $result['method'];
+                file_put_contents('log.txt', "Controller: $controller, Method: $function\n", FILE_APPEND);
 
-        if (class_exists($controller)) {
-            $controllerInstance = new $controller();
+                if (class_exists($controller)) {
+                    $controllerInstance = new $controller();  // Передаем $db в контроллер
 
-            if (method_exists($controllerInstance, $function)) {
-                $controllerInstance->$function();
-                return true;
-            } else {
-                abort("No method {$function} on class {$controller}", 500);
+                    if (method_exists($controllerInstance, $function)) {
+                        call_user_func_array([$controllerInstance, $function], $matches);
+                        return true;
+                    } else {
+                        \App\View\View::renderError("No method {$function} on class {$controller}");
+                    }
+                }
             }
         }
 
+        \App\View\View::renderError("Route not found");
         return false;
     }
 }
